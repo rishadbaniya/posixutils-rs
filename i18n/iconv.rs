@@ -10,7 +10,7 @@
 use clap::Parser;
 use gettextrs::{bind_textdomain_codeset, gettext, setlocale, textdomain, LocaleCategory};
 use iconv_lib::{
-    ascii,
+    ascii, iso_8858_1,
     utf_16::{self, UTF16Variant},
     utf_32::{self, UTF32Variant},
     utf_8,
@@ -159,6 +159,7 @@ enum Encodings {
     UTF_32,
     UTF_32LE,
     UTF_32BE,
+    ISO_8858_1,
 }
 
 impl Encodings {
@@ -362,6 +363,7 @@ fn encoding_conversion(
 ) {
     let iter = input.into_iter();
     let ucs4 = match from {
+        Encodings::ISO_8858_1 => iso_8858_1::to_ucs4(iter, omit_invalid, supress_error),
         Encodings::UTF_8 => utf_8::to_ucs4(iter, omit_invalid, supress_error),
         Encodings::UTF_16 => {
             utf_16::to_ucs4(iter, omit_invalid, supress_error, UTF16Variant::UTF16)
@@ -385,6 +387,7 @@ fn encoding_conversion(
     };
 
     let expected = match to {
+        Encodings::ISO_8858_1 => iso_8858_1::from_ucs4(ucs4, omit_invalid, supress_error),
         Encodings::UTF_8 => utf_8::from_ucs4(ucs4, omit_invalid, supress_error),
         Encodings::UTF_16 => {
             utf_16::from_ucs4(ucs4, omit_invalid, supress_error, UTF16Variant::UTF16)
@@ -479,6 +482,24 @@ fn charmap_conversion(
     }
 }
 
+fn get_encoding_from_locale() -> String {
+    let loc = env::var("LC_ALL")
+        .or_else(|_| env::var("LANG"))
+        .unwrap_or_else(|_| "en_US.UTF-8".to_string());
+
+    if loc == "C" || loc == "POSIX" {
+        return "ASCII".to_string();
+    }
+
+    loc.split('.')
+        .nth(1)
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| {
+            eprintln!("Error: Could not find a codeset from your locale");
+            exit(1);
+        })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -491,28 +512,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exit(0);
     }
 
-    let from_codeset = args.from_codeset.unwrap_or_else(|| {
-        env::var("LANG")
-            .ok()
-            .and_then(|lang| lang.split('.').nth(1).map(String::from))
-            .unwrap_or_else(|| {
-                eprintln!("Error: Could not find a codeset from your locale");
-                exit(1);
-            })
-    });
-
-    let to_codeset = args.to_codeset.unwrap_or_else(|| {
-        env::var("LANG")
-            .ok()
-            .and_then(|lang| lang.split('.').nth(1).map(String::from))
-            .unwrap_or_else(|| {
-                eprintln!("Error: Could not find a codeset from your locale");
-                exit(1);
-            })
-    });
-
-    let from_codeset = parse_codeset(&from_codeset)?;
-    let to_codeset = parse_codeset(&to_codeset)?;
+    let to_codeset = parse_codeset(&args.to_codeset.unwrap_or_else(get_encoding_from_locale))?;
+    let from_codeset = parse_codeset(&args.from_codeset.unwrap_or_else(get_encoding_from_locale))?;
 
     let inputs: Vec<Box<dyn Read>> = match args.files {
         Some(files) => files
